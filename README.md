@@ -3,6 +3,10 @@
 A tiny, dependency-free teleprompter that parks right up against your webcam.
 Built with Python's standard-library **Tkinter** — nothing to `pip install`.
 
+![Teleprompter preview](docs/preview.png)
+
+![Teleprompter slide demo](docs/demo.gif)
+
 It shows two lines at a time: the **current line bright on top**, the **next line
 dimmed below**. Press **Space** to slide smoothly to the next line. The window is
 borderless and always-on-top, so you can drag it so the text sits right next to
@@ -27,6 +31,21 @@ python teleprompter.py
 
 Requires Python 3 (Tkinter ships with the standard CPython installer on Windows
 and macOS; on Linux install `python3-tk`).
+
+### Windows: no Python? Download the .exe
+
+Grab `CameraTeleprompter.exe` from the
+[latest release](https://github.com/EithanTuy/camera-teleprompter/releases/latest)
+and double-click it — no install, no Python required.
+
+### Build the .exe yourself
+
+```sh
+pip install pyinstaller
+build.bat        # or: python -m PyInstaller --onefile --windowed --name CameraTeleprompter teleprompter.py
+```
+
+The executable lands in `dist\CameraTeleprompter.exe`.
 
 ## Controls
 
