@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teleprompter</title>
+<style>
+  :root {
+    --fs: 6vw;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  /* ---------- Editor screen ---------- */
+  #editor {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    gap: 16px;
+    background: #111;
+  }
+  #editor h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  #editor p { margin: 0; color: #999; font-size: 14px; line-height: 1.5; }
+  #script {
+    flex: 1;
+    width: 100%;
+    resize: none;
+    background: #1c1c1c;
+    color: #fff;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 16px;
+    font-size: 17px;
+    line-height: 1.6;
+    font-family: inherit;
+  }
+  #script:focus { outline: none; border-color: #4f8cff; }
+  .row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  label { font-size: 14px; color: #ccc; display: flex; align-items: center; gap: 8px; }
+  input[type=range] { width: 160px; }
+  button {
+    background: #4f8cff;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 22px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #3a78ee; }
+  .ghost { background: #2a2a2a; }
+  .ghost:hover { background: #383838; }
+
+  /* ---------- Prompter screen ---------- */
+  #prompter {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 5vw;
+    cursor: pointer;
+  }
+  #prompter.active { display: flex; }
+  #lines {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+    width: 100%;
+  }
+  .line {
+    font-size: var(--fs);
+    line-height: 1.25;
+    font-weight: 700;
+    transition: opacity .12s ease;
+  }
+  .line.dim { opacity: 0.38; }
+  #hint {
+    position: fixed;
+    bottom: 14px;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 13px;
+    color: #666;
+  }
+  #counter {
+    position: fixed;
+    top: 14px;
+    right: 18px;
+    font-size: 14px;
+    color: #555;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Mirror mode for beam-splitter glass rigs */
+  #prompter.mirror #lines { transform: scaleX(-1); }
+</style>
+</head>
+<body>
+
+  <div id="editor">
+    <h1>Teleprompter</h1>
+    <p>Paste or type your script below — one thought per line works best. Press <b>Start</b>, then tap <b>Space</b> (or click) to advance. Two lines show at a time.</p>
+    <textarea id="script" placeholder="Type your script here, one line at a time...
+Like this.
+Each line shows up as you press space."></textarea>
+    <div class="row">
+      <label>Text size
+        <input type="range" id="size" min="3" max="14" step="0.5" value="6">
+      </label>
+      <label><input type="checkbox" id="mirror"> Mirror (for glass rig)</label>
+    </div>
+    <div class="row">
+      <button id="startBtn">Start ▶</button>
+      <span style="color:#777;font-size:13px;">Tip: keep this window small and park it right under your webcam.</span>
+    </div>
+  </div>
+
+  <div id="prompter">
+    <div id="counter"></div>
+    <div id="lines">
+      <div class="line dim" id="lineTop"></div>
+      <div class="line" id="lineBottom"></div>
+    </div>
+    <div id="hint">Space / Click = next &nbsp;·&nbsp; ← Back &nbsp;·&nbsp; R = restart &nbsp;·&nbsp; Esc = edit</div>
+  </div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const editor = $('editor'), prompter = $('prompter');
+  let lines = [];
+  let idx = 0; // index of the BOTTOM (current) line
+
+  function render() {
+    const top = idx - 1 >= 0 ? lines[idx - 1] : '';
+    const bottom = idx < lines.length ? lines[idx] : '';
+    $('lineTop').textContent = top;
+    $('lineBottom').textContent = bottom || (idx >= lines.length ? '— end —' : '');
+    $('counter').textContent = lines.length ? Math.min(idx + 1, lines.length) + ' / ' + lines.length : '';
+  }
+
+  function start() {
+    lines = $('script').value.split('\n').map(s => s.trim()).filter(s => s.length);
+    if (!lines.length) { $('script').focus(); return; }
+    idx = 0;
+    document.documentElement.style.setProperty('--fs', $('size').value + 'vw');
+    prompter.classList.toggle('mirror', $('mirror').checked);
+    editor.style.display = 'none';
+    prompter.classList.add('active');
+    render();
+  }
+
+  function stop() {
+    prompter.classList.remove('active');
+    editor.style.display = 'flex';
+  }
+
+  function next() { if (idx < lines.length) { idx++; render(); } }
+  function prev() { if (idx > 0) { idx--; render(); } }
+
+  $('startBtn').onclick = start;
+  prompter.onclick = next;
+
+  document.addEventListener('keydown', e => {
+    if (!prompter.classList.contains('active')) {
+      if (e.key === 'Enter' && e.ctrlKey) start();
+      return;
+    }
+    switch (e.key) {
+      case ' ': case 'ArrowDown': case 'ArrowRight':
+        e.preventDefault(); next(); break;
+      case 'ArrowUp': case 'ArrowLeft':
+        e.preventDefault(); prev(); break;
+      case 'r': case 'R':
+        idx = 0; render(); break;
+      case 'Escape':
+        stop(); break;
+    }
+  });
+</script>
+</body>
+</html>
