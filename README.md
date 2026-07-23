@@ -23,6 +23,23 @@ M: And my line goes here.
 
 Your color choices are saved to `teleprompter_config.json` next to the script.
 
+**Hands-free voice follow (optional):** press **V** and the app listens with your
+mic and automatically advances to the next line the moment you finish reading the
+current one — no clicking, no remote. It uses offline speech recognition
+([Vosk](https://alphacephei.com/vosk/)), so nothing leaves your computer.
+
+Voice follow is entirely optional — the core teleprompter needs no extra
+packages. To enable it:
+
+```sh
+pip install -r requirements-voice.txt      # vosk + sounddevice
+python tools/download_model.py             # fetches a ~40 MB English model -> ./model
+```
+
+Then run the app and press **V**. (You can also point at any Vosk model via the
+`VOSK_MODEL` environment variable.) If the packages or model aren't present,
+pressing **V** just shows a hint and everything else keeps working.
+
 ## Run
 
 ```sh
@@ -37,6 +54,10 @@ and macOS; on Linux install `python3-tk`).
 Grab `CameraTeleprompter.exe` from the
 [latest release](https://github.com/EithanTuy/camera-teleprompter/releases/latest)
 and double-click it — no install, no Python required.
+
+> Note: the prebuilt `.exe` includes everything **except** voice follow (which
+> needs the Vosk speech model). For hands-free voice follow, run from Python as
+> described below.
 
 ### Build the .exe yourself
 
@@ -55,6 +76,7 @@ The executable lands in `dist\CameraTeleprompter.exe`.
 | `←` / `↑`           | Previous line                         |
 | `R`                 | Restart from the top                  |
 | `+` / `-`           | Bigger / smaller text                 |
+| `V`                 | Voice follow: auto-advance when you finish a line |
 | `C`                 | Settings: speaker letter → color      |
 | `E`                 | Edit / paste your script in-window    |
 | `L`                 | Load a `.txt` script file             |

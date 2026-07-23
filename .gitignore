@@ -16,3 +16,8 @@ Thumbs.db
 
 # Per-user saved settings
 teleprompter_config.json
+
+# Voice-follow model (downloaded locally, not committed)
+model/
+vosk-model*/
+vosk-model*.zip

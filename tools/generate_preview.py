@@ -15,7 +15,7 @@ HINT_H = 28
 BG = (0, 0, 0)
 DIM_FACTOR = 0.62
 HINT_TEXT = ("SPACE/click next  ·  ←back  ·  R restart  ·  +/- size  ·  "
-             "C colors  ·  E edit  ·  L load  ·  ESC quit")
+             "V voice  ·  C colors  ·  E edit  ·  L load  ·  ESC quit")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS = os.path.join(os.path.dirname(HERE), "docs")

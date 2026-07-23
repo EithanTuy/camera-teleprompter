@@ -14,7 +14,11 @@ Run:  python teleprompter.py
 """
 
 import os
+import re
 import json
+import queue
+import threading
+import glob as _glob
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import filedialog, colorchooser
@@ -70,6 +74,146 @@ def ease(t):
     return 1 - (1 - t) ** 3      # ease-out cubic
 
 
+# ============================================================ voice following
+# Optional: auto-advance when you finish reading the current line out loud.
+# Uses Vosk (offline speech recognition) + sounddevice. Both are optional:
+#   pip install vosk sounddevice
+# and a model folder (e.g. vosk-model-small-en-us-0.15) placed next to this
+# script, or pointed to by the VOSK_MODEL environment variable.
+SAMPLE_RATE = 16000
+
+
+def norm_words(text):
+    """Lowercase word list for matching; drops a leading speaker tag like 'J:'."""
+    text = re.sub(r"^\s*[\w']{1,15}\s*:\s*", "", text)      # strip "J:" / "John:"
+    return re.sub(r"[^a-z0-9' ]+", " ", text.lower()).split()
+
+
+def find_model_path():
+    """Locate a Vosk model dir: $VOSK_MODEL, ./model, or ./vosk-model* nearby."""
+    env = os.environ.get("VOSK_MODEL")
+    if env and os.path.isdir(env):
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = [os.path.join(here, "model")]
+    cand += sorted(_glob.glob(os.path.join(here, "vosk-model*")))
+    for c in cand:
+        if os.path.isdir(c):
+            return c
+    return None
+
+
+class VoiceFollower:
+    """Background listener that advances the prompter when the current line is
+    read aloud. Safe no-op if vosk / sounddevice / a model aren't available."""
+
+    def __init__(self, app):
+        self.app = app
+        self.running = False
+        self.thread = None
+        self.lock = threading.Lock()
+        self.targets = []
+        self._consumed = False
+        self._need_reset = False
+        self.error = None
+
+    @staticmethod
+    def deps_ok():
+        try:
+            import vosk            # noqa: F401
+            import sounddevice     # noqa: F401
+            return True
+        except Exception:
+            return False
+
+    def set_line(self, text):
+        """Tell the listener which line it's currently waiting to hear finished."""
+        with self.lock:
+            self.targets = norm_words(text)
+            self._consumed = False
+            self._need_reset = True
+
+    def start(self):
+        if self.running:
+            return True
+        if not self.deps_ok():
+            self.error = "pip install vosk sounddevice"
+            return False
+        if not find_model_path():
+            self.error = "no Vosk model found (see README)"
+            return False
+        self.error = None
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        return True
+
+    def stop(self):
+        self.running = False
+
+    # ------------------------------------------------------------- matching
+    @staticmethod
+    def _complete(words, targets):
+        """True once the spoken words cover the target line. Matches target words
+        as an in-order subsequence of what was heard (so it tolerates extra,
+        skipped, or misheard words), then requires good coverage AND that the
+        line's final word was heard — i.e. the reader actually reached the end."""
+        if not targets:
+            return False
+        ti = matched = 0
+        for w in words:
+            for j in range(ti, len(targets)):
+                if targets[j] == w:
+                    ti, matched = j + 1, matched + 1
+                    break
+        if matched >= len(targets):
+            return True
+        heard_last = targets[-1] in words
+        if len(targets) >= 4:
+            return heard_last and matched / len(targets) >= 0.7
+        return heard_last and matched >= len(targets) - 1
+
+    # --------------------------------------------------------- audio thread
+    def _run(self):
+        try:
+            import vosk
+            import sounddevice as sd
+            vosk.SetLogLevel(-1)
+            model = vosk.Model(find_model_path())
+            q = queue.Queue()
+
+            def cb(indata, frames, time_info, status):
+                q.put(bytes(indata))
+
+            with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=8000,
+                                   dtype="int16", channels=1, callback=cb):
+                rec = vosk.KaldiRecognizer(model, SAMPLE_RATE)
+                while self.running:
+                    if self._need_reset:
+                        rec = vosk.KaldiRecognizer(model, SAMPLE_RATE)
+                        self._need_reset = False
+                    try:
+                        data = q.get(timeout=0.2)
+                    except queue.Empty:
+                        continue
+                    if rec.AcceptWaveform(data):
+                        words = json.loads(rec.Result()).get("text", "").split()
+                    else:
+                        words = json.loads(rec.PartialResult()).get("partial", "").split()
+                    with self.lock:
+                        targets = list(self.targets)
+                        consumed = self._consumed
+                    if targets and not consumed and self._complete(words, targets):
+                        with self.lock:
+                            self._consumed = True
+                        self._need_reset = True
+                        self.app.root.after(0, self.app.voice_advance)
+        except Exception as exc:                      # mic error, etc.
+            self.error = str(exc)
+            self.running = False
+            self.app.root.after(0, self.app.on_voice_error)
+
+
 class Teleprompter:
     def __init__(self, root):
         self.root = root
@@ -79,8 +223,10 @@ class Teleprompter:
         self.editing = False
         self.in_settings = False
         self.animating = False
+        self.voice_on = False
         self.colors = {}             # letter -> (r, g, b)
         self.load_config()
+        self.voice = VoiceFollower(self)
 
         # --- window: always on top, borderless, dark, draggable -------------
         root.title("Teleprompter")
@@ -103,6 +249,9 @@ class Teleprompter:
                                                  font=self.font, justify="center")
         self.extra_item = self.canvas.create_text(0, 0, text="", fill=hexcol(BG),
                                                   font=self.font, justify="center")
+        # small mic indicator, shown only while voice-follow is active
+        self.mic_item = self.canvas.create_text(0, 0, text="", fill="#38d66b",
+                                                font=self.small, anchor="ne")
 
         # hint / status bar
         self.hint = tk.Label(root, text=self.RUN_HINT, font=self.small,
@@ -136,6 +285,8 @@ class Teleprompter:
         root.bind("L", lambda e: self.load_file())
         root.bind("c", lambda e: self.toggle_settings())
         root.bind("C", lambda e: self.toggle_settings())
+        root.bind("v", lambda e: self.toggle_voice())
+        root.bind("V", lambda e: self.toggle_voice())
         root.bind("<Escape>", lambda e: self.on_escape())
 
         # click to advance; drag (left or right button) to move the window
@@ -150,7 +301,7 @@ class Teleprompter:
         root.focus_force()
 
     RUN_HINT = ("SPACE/click next  ·  ←back  ·  R restart  ·  +/- size  ·  "
-                "C colors  ·  E edit  ·  L load  ·  drag to move  ·  ESC quit")
+                "V voice  ·  C colors  ·  E edit  ·  L load  ·  ESC quit")
 
     # -------------------------------------------------------------- config I/O
     def load_config(self):
@@ -217,6 +368,13 @@ class Teleprompter:
         self.canvas.coords(self.cur_item, cx, y_cur)
         self.canvas.coords(self.next_item, cx, y_next)
         self.canvas.coords(self.extra_item, cx, y_next + (y_next - y_cur))
+
+        # mic indicator + tell the voice listener which line to wait for
+        self.canvas.coords(self.mic_item, 2 * cx - 12, 10)
+        self.canvas.itemconfig(self.mic_item,
+                               text="🎤 listening…" if self.voice_on else "")
+        if self.voice_on and not end:
+            self.voice.set_line(cur_text)
 
     # ------------------------------------------------------------- navigation
     def next(self):
@@ -448,6 +606,35 @@ class Teleprompter:
         self.save_config()
         self.build_settings()
 
+    # ---------------------------------------------------------- voice follow
+    def toggle_voice(self):
+        if self.editing or self.in_settings:
+            return
+        if self.voice_on:
+            self.voice.stop()
+            self.voice_on = False
+            self.hint.config(text=self.RUN_HINT)
+            self.render()
+            return
+        if self.voice.start():
+            self.voice_on = True
+            self.hint.config(text="Voice-follow ON — read the top line; it advances "
+                                  "when you finish.  Press V to stop.")
+            self.render()
+        else:
+            self.hint.config(text=f"Voice unavailable: {self.voice.error}  "
+                                  "(see README).  Press any key.")
+
+    def voice_advance(self):
+        """Called from the listener thread (via after) when a line was read."""
+        if self.voice_on and not self.editing and not self.in_settings:
+            self.next()
+
+    def on_voice_error(self):
+        self.voice_on = False
+        self.hint.config(text=f"Voice stopped: {self.voice.error}")
+        self.render()
+
     # --------------------------------------------------------------- escape
     def on_escape(self):
         if self.editing:
@@ -455,6 +642,7 @@ class Teleprompter:
         elif self.in_settings:
             self.toggle_settings()
         else:
+            self.voice.stop()
             self.root.destroy()
 
 

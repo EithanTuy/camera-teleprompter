@@ -1,0 +1,5 @@
+# Optional: enables the voice-follow feature (press V in the app).
+# The core teleprompter needs none of these — it runs on the Python standard
+# library alone. Install these only if you want hands-free auto-advance.
+vosk>=0.3.45
+sounddevice>=0.4.6
